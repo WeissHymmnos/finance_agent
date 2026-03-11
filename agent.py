@@ -12,7 +12,7 @@ from langgraph.prebuilt import create_react_agent
 from ddgs import DDGS
 from llama_index.llms.openai_like import OpenAILike
 # LlamaIndex
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from llama_index.core import VectorStoreIndex, PromptTemplate,SimpleDirectoryReader, Settings
 from llama_index.llms.openai import OpenAI as LlamaOpenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
@@ -173,11 +173,12 @@ async def main():
     Ensure the 'investment_verdict' section is detailed and written in Professional Chinese.
     """
     
+    # 修改后的代码：用 PromptTemplate 把 prompt 包裹起来
     final_report = await llama_llm.astructured_predict(
         FinalComparativeReport,
-        prompt=prompt
-    )
-    
+        prompt=PromptTemplate(prompt)
+    )    
+
     print("\n 终极量化研报 (标准 JSON 格式交付)：")
     print(final_report.model_dump_json(indent=4))
 
