@@ -33,9 +33,6 @@ ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 TARGET_TICKER = "NVDA"
 
 # 1. 定义LLM
-# 1. 定义 LlamaIndex 专属的“正规军”大脑
-# 注意：这里我们使用刚才 as 出来的 LlamaOpenAI，且参数名必须是 api_base
-# 1. 定义 LlamaIndex 专属的“第三方兼容”大脑
 llama_llm = OpenAILike(
     model="moonshot-v1-32k",
     api_key=MOONSHOT_API_KEY,
@@ -45,12 +42,11 @@ llama_llm = OpenAILike(
     temperature=0,
     additional_kwargs={"extra_body": {"chat_template_kwargs": {"thinking": False}}}
 )
-# 2. 全局绑定：让 RAG 引擎默认使用这个纯正的 LlamaIndex 大脑
+# 2. 全局绑定
 Settings.llm = llama_llm
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")# ==========================================
 
-# 2. 签署数据契约 (Pydantic 结构化模型)
-# ==========================================
+# 2.Pydantic 结构化模型
 class CompanyAnalysis(BaseModel):
     ticker: str = Field(..., description="股票代码")
     dynamic_quant_metrics: str = Field(..., description="代码解释器动态计算出的量价指标分析")
@@ -61,17 +57,13 @@ class FinalComparativeReport(BaseModel):
     ford_analysis: CompanyAnalysis
     investment_verdict: str = Field(..., description="基于量价与基本面的中英双语对冲/投资建议")
 
-# ==========================================
-# 3. 定义流水线事件 (Event-Driven Flow)
-# ==========================================
+# 3. Event-Driven Flow
 class QuantDataEvent(Event):
-    """事件节点：动态量化数据计算完毕"""
+    """动态量化数据计算完毕"""
     ticker: str
     quant_result: str
 
-# ==========================================
-# 4. 构建单股深度分析流水线 (Workflow)
-# ==========================================
+# 4. Workflow
 class SingleStockQuantWorkflow(Workflow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -160,7 +152,7 @@ async def main():
     # 等待双线任务全部完成
     tsla_result, f_result = await asyncio.gather(task_tsla, task_f)
     
-    print("\n 双方数据收集完毕，主脑正在进行终极结构化对比，请稍候...")
+    print("\n 数据收集完毕，进行终极结构化对比，请稍候...")
     
     # 3. 强制结构化输出对比报告
     prompt = f"""
@@ -179,7 +171,7 @@ async def main():
         prompt=PromptTemplate(prompt)
     )    
 
-    print("\n 终极量化研报 (标准 JSON 格式交付)：")
+    print("\n量化研报 (标准 JSON 格式交付)：")
     print(final_report.model_dump_json(indent=4))
 
 if __name__ == "__main__":
