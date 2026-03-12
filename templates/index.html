@@ -3,16 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <title>Finance Agent 交互终端</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #f4f7f6; }
+        body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f4f7f6; }
         .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="text"], input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
         button { background: #2c3e50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; }
         button:disabled { background: #95a5a6; }
-        #result { margin-top: 20px; white-space: pre-wrap; background: #272822; color: #f8f8f2; padding: 15px; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+        #report { margin-top: 20px; display: none; }
+        .report-card { background: #fff; color: #333; padding: 15px; border-left: 5px solid #2c3e50; margin-bottom: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .verdict { background: #e8f4fd; border: 1px solid #3498db; padding: 15px; border-radius: 4px; color: #2c3e50; font-weight: 500; margin-top: 15px; }
         .loading { color: #3498db; font-style: italic; margin-top: 10px; display: none; }
+        #chart-main { width: 100%; height: 400px; margin-top: 20px; display: none; }
     </style>
 </head>
 <body>
@@ -20,48 +24,90 @@
         <h2>智能金融研报助手</h2>
         
         <div class="form-group">
-            <label>分析对象 (股票代码，逗号分隔):</label>
+            <label>分析对象 (股票代码):</label>
             <input type="text" id="tickers" placeholder="例如: TSLA, F, NVDA" value="TSLA, F">
         </div>
         
         <div class="form-group">
-            <label>研究时间范围 (最近几个月):</label>
+            <label>研究时间范围 (月):</label>
             <input type="number" id="months" value="6" min="1" max="24">
         </div>
         
         <button id="submitBtn">开始量化分析</button>
+        <div id="loading" class="loading">正在执行 Agent 任务并生成可视化图表，请稍候...</div>
         
-        <div id="loading" class="loading">正在调用 AI Agent 执行代码并研读 SEC 财报，请稍候 (可能需要 1-2 分钟)...</div>
-        
-        <div id="result">等待任务提交...</div>
+        <div id="chart-main"></div>
+        <div id="report"></div>
     </div>
 
     <script>
+        let myChart = null;
+
+        function initChart(data) {
+            const chartDom = document.getElementById('chart-main');
+            chartDom.style.display = 'block';
+            if (!myChart) myChart = echarts.init(chartDom);
+            
+            const tickers = Object.keys(data.analyses);
+            const volatilities = tickers.map(t => data.analyses[t].volatility * 100);
+            const drawdowns = tickers.map(t => Math.abs(data.analyses[t].max_drawdown * 100));
+
+            const option = {
+                title: { text: '风险指标对比 (%)', left: 'center' },
+                tooltip: { trigger: 'axis' },
+                legend: { data: ['年化波动率', '最大回撤'], top: '10%' },
+                xAxis: { type: 'category', data: tickers },
+                yAxis: { type: 'value' },
+                series: [
+                    { name: '年化波动率', type: 'bar', data: volatilities, itemStyle: { color: '#3498db' } },
+                    { name: '最大回撤', type: 'bar', data: drawdowns, itemStyle: { color: '#e74c3c' } }
+                ]
+            };
+            myChart.setOption(option);
+        }
+
         document.getElementById('submitBtn').onclick = async function() {
             const tickers = document.getElementById('tickers').value.split(',').map(s => s.trim().toUpperCase());
             const months = parseInt(document.getElementById('months').value);
             const btn = this;
             const loading = document.getElementById('loading');
-            const resultDiv = document.getElementById('result');
+            const reportDiv = document.getElementById('report');
+            const chartDom = document.getElementById('chart-main');
 
-            // 状态更新
             btn.disabled = true;
             loading.style.display = 'block';
-            resultDiv.textContent = '分析中...';
+            reportDiv.innerHTML = '';
+            chartDom.style.display = 'none';
 
             try {
-                const response = await fetch('http://127.0.0.1:5000/analyze', {
+                const response = await fetch('/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ tickers, months })
                 });
 
-                if (!response.ok) throw new Error('服务器响应异常');
-
+                if (!response.ok) throw new Error('Network Error');
                 const data = await response.json();
-                resultDiv.textContent = JSON.stringify(data, null, 4);
+                
+                // 渲染图表
+                initChart(data);
+
+                // 渲染文字报告
+                let html = '<h3>详细分析报告</h3>';
+                for (const [ticker, analysis] of Object.entries(data.analyses)) {
+                    html += `
+                        <div class="report-card">
+                            <strong>[${ticker}] 量化结论:</strong><p>${analysis.dynamic_quant_metrics}</p>
+                            <strong>[${ticker}] SEC 风险提取:</strong><p>${analysis.sec_risk_factors}</p>
+                        </div>`;
+                }
+                html += `<div class="verdict"><strong>专家建议:</strong><br>${data.investment_verdict.replace(/\n/g, '<br>')}</div>`;
+                
+                reportDiv.innerHTML = html;
+                reportDiv.style.display = 'block';
             } catch (error) {
-                resultDiv.textContent = '错误: ' + error.message;
+                reportDiv.innerHTML = `<div style="color:red">错误: ${error.message}</div>`;
+                reportDiv.style.display = 'block';
             } finally {
                 btn.disabled = false;
                 loading.style.display = 'none';
