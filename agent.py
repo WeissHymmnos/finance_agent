@@ -22,6 +22,12 @@ from llama_index.tools.code_interpreter.base import CodeInterpreterToolSpec
 from llama_index.core.agent import ReActAgent
 # LlamaIndex引擎
 from llama_index.core.workflow import Event, StartEvent, StopEvent, Workflow, step
+#flask
+from flask import Flask, request, jsonify,render_template
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app)
 
 nest_asyncio.apply()
 
@@ -84,19 +90,19 @@ class SingleStockQuantWorkflow(Workflow):
     async def step_1_dynamic_quant(self, ev: StartEvent) -> QuantDataEvent:
         """步骤 1：大模型自主写 Python 代码获取并计算数据"""
         ticker = ev.ticker
+        months = ev.months
+
         print(f"[{ticker}] 启动代码沙盒：正在自主编写并执行代码计算波动率与回撤...")
         
         prompt = f"""
         Write and execute Python code to:
-        1. Fetch the last 6 months of historical close prices for {ticker} using yfinance.
+        1. Fetch the last {months} months of historical close prices for {ticker} using yfinance.
         2. Calculate the Annualized Volatility and Maximum Drawdown.
         3. Print ONLY the final numerical results clearly.
         """
 
-        # 爆改这里：把 input 换成官方硬性要求的 user_msg
         response = await self.code_agent.run(user_msg=prompt)
         
-        # 稳妥提取返回文本
         final_answer = str(response)
         
         return QuantDataEvent(ticker=ticker, quant_result=final_answer)
@@ -134,45 +140,42 @@ class SingleStockQuantWorkflow(Workflow):
         print(f"[{ticker}]  单股分析流转完毕！")
         return StopEvent(result=analysis)
 
-# ==========================================
-# 5. 司令部：并发调度与终极对决
-# ==========================================
-async def main():
-    print("========================================================")
-    print(" 启动：TSLA vs F 动态量价与基本面对比")
-    print("========================================================\n")
+# 5.并发调度
+@app.route('/')
+def index():
+        return render_template('index.html')
+
+
+@app.route('/analyze', methods=['POST'])
+async def analyze():
+    data = request.json
+    # 获取交互参数：对象 (tickers) 和 时间范围 (months)
+    tickers = data.get('tickers', ['TSLA', 'F'])
+    months = data.get('months', 6)
     
-    # 1. 实例化工作流引擎
     workflow = SingleStockQuantWorkflow(timeout=600)
     
-    # 2. 并发拉起两只股票的分析流
-    task_tsla = workflow.run(ticker="TSLA")
-    task_f = workflow.run(ticker="F")
+    # 并发执行动态对象分析
+    tasks = [workflow.run(ticker=t, months=months) for t in tickers]
+    results = await asyncio.gather(*tasks)
     
-    # 等待双线任务全部完成
-    tsla_result, f_result = await asyncio.gather(task_tsla, task_f)
+    # 构建对比 Prompt
+    results_str = "\n".join([f"{r.ticker} Data: {r.model_dump_json()}" for r in results])
     
-    print("\n 数据收集完毕，进行终极结构化对比，请稍候...")
-    
-    # 3. 强制结构化输出对比报告
     prompt = f"""
-    You are a Senior Quantitative Analyst. Compare TSLA and F based on the following raw agent data:
-    
-    TSLA Data: {tsla_result.model_dump_json()}
-    Ford (F) Data: {f_result.model_dump_json()}
-    
-    Output your comprehensive comparison STRICTLY conforming to the FinalComparativeReport JSON schema.
-    Ensure the 'investment_verdict' section is detailed and written in Professional Chinese.
+    You are a Senior Quantitative Analyst. Compare {', '.join(tickers)} based on:
+    {results_str}
+    Output STRICTLY conforming to the FinalComparativeReport JSON schema.
+    Investment verdict must be in Professional Chinese.
     """
     
-    # 修改后的代码：用 PromptTemplate 把 prompt 包裹起来
     final_report = await llama_llm.astructured_predict(
         FinalComparativeReport,
         prompt=PromptTemplate(prompt)
-    )    
-
-    print("\n量化研报 (标准 JSON 格式交付)：")
-    print(final_report.model_dump_json(indent=4))
+    )
+    
+    return jsonify(final_report.model_dump())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    app.run(host='127.0.0.1',port=5000, debug=True)
+

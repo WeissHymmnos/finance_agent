@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Finance Agent 交互终端</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #f4f7f6; }
+        .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background: #2c3e50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; }
+        button:disabled { background: #95a5a6; }
+        #result { margin-top: 20px; white-space: pre-wrap; background: #272822; color: #f8f8f2; padding: 15px; border-radius: 4px; overflow-x: auto; font-family: monospace; }
+        .loading { color: #3498db; font-style: italic; margin-top: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>智能金融研报助手</h2>
+        
+        <div class="form-group">
+            <label>分析对象 (股票代码，逗号分隔):</label>
+            <input type="text" id="tickers" placeholder="例如: TSLA, F, NVDA" value="TSLA, F">
+        </div>
+        
+        <div class="form-group">
+            <label>研究时间范围 (最近几个月):</label>
+            <input type="number" id="months" value="6" min="1" max="24">
+        </div>
+        
+        <button id="submitBtn">开始量化分析</button>
+        
+        <div id="loading" class="loading">正在调用 AI Agent 执行代码并研读 SEC 财报，请稍候 (可能需要 1-2 分钟)...</div>
+        
+        <div id="result">等待任务提交...</div>
+    </div>
+
+    <script>
+        document.getElementById('submitBtn').onclick = async function() {
+            const tickers = document.getElementById('tickers').value.split(',').map(s => s.trim().toUpperCase());
+            const months = parseInt(document.getElementById('months').value);
+            const btn = this;
+            const loading = document.getElementById('loading');
+            const resultDiv = document.getElementById('result');
+
+            // 状态更新
+            btn.disabled = true;
+            loading.style.display = 'block';
+            resultDiv.textContent = '分析中...';
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tickers, months })
+                });
+
+                if (!response.ok) throw new Error('服务器响应异常');
+
+                const data = await response.json();
+                resultDiv.textContent = JSON.stringify(data, null, 4);
+            } catch (error) {
+                resultDiv.textContent = '错误: ' + error.message;
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        };
+    </script>
+</body>
+</html>
