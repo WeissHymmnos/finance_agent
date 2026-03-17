@@ -60,12 +60,6 @@ class QuantDataEvent(Event):
 class SingleStockQuantWorkflow(Workflow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.code_agent = ReActAgent(
-            tools=CodeInterpreterToolSpec().to_tool_list(), 
-            llm=llama_llm,
-            verbose=True,
-            max_iterations=10
-        )       
         self.dl = Downloader("QuantLab", "research@quant.com")
 
     @step
@@ -74,13 +68,26 @@ class SingleStockQuantWorkflow(Workflow):
         ticker, months = ev.ticker, ev.months
         print(f"[{ticker}] 正在执行代码沙盒计算指标...")
         
+        # 每次运行创建独立的 Agent，避免并发内存冲突
+        local_code_agent = ReActAgent(
+            tools=CodeInterpreterToolSpec().to_tool_list(), 
+            llm=llama_llm,
+            verbose=False,
+            max_iterations=10
+        )
+        
         prompt = f"""
         Write and execute Python code to:
         1. Fetch the last {months} months of historical close prices for {ticker} using yfinance.
-        2. Calculate the Annualized Volatility and Maximum Drawdown.
-        3. Print ONLY the final numerical results clearly.
+        2. Calculate the Annualized Volatility: (standard deviation of daily returns) * sqrt(252).
+        3. Calculate the Maximum Drawdown (MDD): (Current_Price - Running_Peak) / Running_Peak.
+        4. In your FINAL ANSWER, you MUST include these exact markers with numerical values:
+           VOLATILITY: <value>
+           MAX_DRAWDOWN: <value>
+        
+        Example: VOLATILITY: 0.253, MAX_DRAWDOWN: -0.124
         """
-        response = await self.code_agent.run(user_msg=prompt, early_stopping_method='generate')
+        response = await local_code_agent.run(user_msg=prompt)
         return QuantDataEvent(ticker=ticker, quant_result=str(response))
 
     @step
@@ -109,8 +116,8 @@ class SingleStockQuantWorkflow(Workflow):
         analysis = CompanyAnalysis(
             ticker=ticker,
             dynamic_quant_metrics=ev.quant_result,
-            volatility=0.0, # Placeholder, will be filled by final LLM
-            max_drawdown=0.0, # Placeholder, will be filled by final LLM
+            volatility=0.0, 
+            max_drawdown=0.0, 
             sec_risk_factors=str(risk_response)
         )
         return StopEvent(result=analysis)
@@ -129,14 +136,26 @@ async def analyze():
     tasks = [workflow.run(ticker=t, months=months) for t in tickers]
     results = await asyncio.gather(*tasks)
     
-    results_str = "\n".join([f"{r.ticker} Data: {r.model_dump_json()}" for r in results])
+    # 构造更清晰的上下文给 LLM，移除容易干扰的 placeholder
+    results_context = ""
+    for r in results:
+        results_context += f"--- TICKER: {r.ticker} ---\n"
+        results_context += f"QUANT_DATA: {r.dynamic_quant_metrics}\n"
+        results_context += f"SEC_RISKS: {r.sec_risk_factors}\n\n"
+
     prompt = f"""
-    You are a Senior Quantitative Analyst. Compare {', '.join(tickers)} based on:
-    {results_str}
-    Extract numerical values for 'volatility' and 'max_drawdown' from the provided 'dynamic_quant_metrics' strings.
-    Map the results into the 'analyses' dictionary where the key is the ticker symbol.
-    Output STRICTLY conforming to the FinalComparativeReport JSON schema.
-    Investment verdict must be in Professional Chinese.
+    You are a Senior Quantitative Analyst. Analyze the following data for {', '.join(tickers)}:
+    
+    {results_context}
+    
+    Task:
+    1. Extract numerical values for 'volatility' and 'max_drawdown' from each 'QUANT_DATA' block.
+    2. Ensure 'max_drawdown' is represented as a negative float (e.g., -0.15).
+    3. If a value is missing or unclear, use 0.0.
+    4. Provide a comparative investment verdict in Professional Chinese.
+    
+    Output STRICTLY in JSON format following the FinalComparativeReport schema.
+    Key in 'analyses' must be the ticker symbol.
     """
     
     final_report = await llama_llm.astructured_predict(
