@@ -68,7 +68,6 @@ class SingleStockQuantWorkflow(Workflow):
         ticker, months = ev.ticker, ev.months
         print(f"[{ticker}] 正在执行代码沙盒计算指标...")
         
-        # 每次运行创建独立的 Agent，避免并发内存冲突
         local_code_agent = ReActAgent(
             tools=CodeInterpreterToolSpec().to_tool_list(), 
             llm=llama_llm,
@@ -116,8 +115,8 @@ class SingleStockQuantWorkflow(Workflow):
         analysis = CompanyAnalysis(
             ticker=ticker,
             dynamic_quant_metrics=ev.quant_result,
-            volatility=0.0, 
-            max_drawdown=0.0, 
+            volatility=0.0,
+            max_drawdown=0.0,
             sec_risk_factors=str(risk_response)
         )
         return StopEvent(result=analysis)
@@ -136,7 +135,7 @@ async def analyze():
     tasks = [workflow.run(ticker=t, months=months) for t in tickers]
     results = await asyncio.gather(*tasks)
     
-    # 构造更清晰的上下文给 LLM，移除容易干扰的 placeholder
+    # 构造更清晰的上下文
     results_context = ""
     for r in results:
         results_context += f"--- TICKER: {r.ticker} ---\n"
